@@ -3,6 +3,7 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+.vscode/settings.json
 
 # Created by https://www.toptal.com/developers/gitignore/api/platformio
 # Edit at https://www.toptal.com/developers/gitignore?templates=platformio
