@@ -10,11 +10,19 @@ namespace ROS_COMMS
 rcl_allocator_t allocator;
 rclc_executor_t executor;
 rclc_support_t support;
+rcl_timer_t timer;
 
 rcl_node_t node;
 
 rcl_publisher_t left_wheel_vel_pub;
 rcl_publisher_t right_wheel_vel_pub;
+
+// Wheel vel callbacks
+std::function<float(void)> left_wheel_vel_callback;
+std::function<float(void)> right_wheel_vel_callback;
+std_msgs__msg__Float32 msg_left;
+std_msgs__msg__Float32 msg_right;
+//
 
 #define RCCHECK(fn)              \
   {                              \
@@ -34,8 +42,8 @@ rcl_publisher_t right_wheel_vel_pub;
 
 struct wifi_config_t
 {
-  String ssid;
-  String password;
+  char* ssid;
+  char* password;
   IPAddress agent_ip;
   uint16_t agent_port;
 };
@@ -49,24 +57,43 @@ void error_loop()
   }
 }
 
-void setup_wifi_comms(String ssid, String password, IPAddress agent_ip,
+void setup_wifi_comms(char* ssid, char* password, IPAddress agent_ip,
                       uint16_t agent_port)
 {
   // Configure wifi transport
   //   TODO: Confirm that we are using udp4 transport
-  set_microros_wifi_transports(ssid.c_str(), password.c_str(), agent_ip,
-                               agent_port);
+  Serial.println("Setting up wifi comms");
+  Serial.println(ssid);
+  Serial.println(password);
+  Serial.println(agent_ip);
+  Serial.println(agent_port);
+  set_microros_wifi_transports(ssid, password, agent_ip, agent_port);
   delay(2000);
 }
 
-void create_wheel_vel_publishers())
+void timer_callback(rcl_timer_t* timer, int64_t last_call_time)
 {
-  // create publisher
-  RCCHECK(rclc_publisher_init_default(publisher, &node, type_support,
-                                      topic_name.c_str()));
+  RCLC_UNUSED(last_call_time);
+  if (timer != NULL)
+  {
+    msg_left.data = left_wheel_vel_callback();
+    msg_right.data = right_wheel_vel_callback();
+    RCSOFTCHECK(rcl_publish(&left_wheel_vel_pub, &msg_left, NULL));
+    RCSOFTCHECK(rcl_publish(&right_wheel_vel_pub, &msg_right, NULL));
+  }
 }
 
-void init(String node_name, wifi_config_t wifi_config)
+void set_left_wheel_vel_callback(std::function<float(void)> callback)
+{
+  left_wheel_vel_callback = callback;
+}
+
+void set_right_wheel_vel_callback(std::function<float(void)> callback)
+{
+  right_wheel_vel_callback = callback;
+}
+
+void init(String node_name, wifi_config_t wifi_config, int publish_rate)
 {
   // Set UDP4 as transport
   setup_wifi_comms(wifi_config.ssid, wifi_config.password, wifi_config.agent_ip,
@@ -81,14 +108,29 @@ void init(String node_name, wifi_config_t wifi_config)
   RCCHECK(rclc_node_init_default(&node, node_name.c_str(), "", &support));
 
   // create publisher
-  RCCHECK(rclc_publisher_init_default(
-      &publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+  RCCHECK(rclc_publisher_init_best_effort(
+      &left_wheel_vel_pub, &node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
       "/rover_base/wheel_velocity/left"));
 
   // Create publisher for right wheel velocity
-  RCCHECK(rclc_publisher_init_default(
-      &publisher, &node, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
+  RCCHECK(rclc_publisher_init_best_effort(
+      &right_wheel_vel_pub, &node,
+      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32),
       "/rover_base/wheel_velocity/right"));
+
+  //   // create timer,
+
+  //   Compute timemout in ms from publish rate (hz)
+  const unsigned int timer_timeout = 1000 / publish_rate;
+  RCCHECK(rclc_timer_init_default(&timer, &support, RCL_MS_TO_NS(timer_timeout),
+                                  timer_callback));
+
+  // create executor
+  RCCHECK(rclc_executor_init(&executor, &support.context, 1, &allocator));
+  RCCHECK(rclc_executor_add_timer(&executor, &timer));
 }
+
+void spin() { RCCHECK(rclc_executor_spin_some(&executor, RCL_MS_TO_NS(50))); }
 
 }  // namespace ROS_COMMS
