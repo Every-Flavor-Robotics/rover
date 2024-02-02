@@ -146,7 +146,7 @@ def generate_launch_description():
             output='screen'),
 
         IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'slam_launch.py')),
+            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'slam_launch.launch.py')),
             condition=IfCondition(slam),
             launch_arguments={'namespace': namespace,
                               'use_sim_time': use_sim_time,
@@ -173,7 +173,7 @@ def generate_launch_description():
                                                        'drive_base_launch.launch.py'))),
 
         IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'navigation_launch.py')),
+            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'navigation_launch.launch.py')),
             launch_arguments={'namespace': namespace,
                               'use_sim_time': use_sim_time,
                               'autostart': autostart,
