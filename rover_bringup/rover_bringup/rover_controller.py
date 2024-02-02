@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 import tf_transformations
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, Twist
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from tf2_ros import TransformBroadcaster
 
@@ -21,8 +21,11 @@ import threading
 
 class OdometryPublisher(Node):
 
-    def __init__(self, motorgo_ip: str, motorgo_port: int):
+    def __init__(self, recv_ip: str, recv_port: int, motorgo_ip: str, motorgo_port: int):
         super().__init__('odom_publisher')
+
+        self.recv_ip = recv_ip
+        self.recv_port = recv_port
 
         self.motorgo_ip = motorgo_ip
         self.motorgo_port = motorgo_port
@@ -42,25 +45,35 @@ class OdometryPublisher(Node):
             depth=5
         )
 
-        
-
+       
+        self.cmd_vel_subscriber = self.create_subscription(Twist, 'cmd_vel', self.cmd_vel_callback, qos_profile)
 
 
         self.publisher_ = self.create_publisher(Odometry, 'odom', qos_profile)
         self.tf_broadcaster = TransformBroadcaster(self)
+        
 
 
         timer_period = 1.0 / self.get_parameter("publish_frequency").value
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
-        self.previous_left_wheel_position = 0.0
-        self.previous_right_wheel_position = 0.0
+
+        # Send wheel commands at 60 Hz
+        # Create a thread for sending UDP data
+        self.left_wheel_velocity_command = 0.0
+        self.right_wheel_velocity_command = 0.0
+        self.send_thread = threading.Thread(target=self.send_udp_data, args=(self.motorgo_ip, self.motorgo_port, "Hello!", 60))
+        self.send_thread.start()
+
+
+        self.previous_left_wheel_position = None
+        self.previous_right_wheel_position = None
 
         self.previous_left_wheel_velocity = 0.0
         self.previous_right_wheel_velocity = 0.0
 
-        self.left_wheel_position = 0.0
-        self.right_wheel_position = 0.0
+        self.left_wheel_position = None
+        self.right_wheel_position = None
 
         self.left_wheel_velocity = 0.0
         self.right_wheel_velocity = 0.0
@@ -73,6 +86,12 @@ class OdometryPublisher(Node):
         self.msg = Odometry()
 
         self.msg_lock = threading.Lock()
+
+        # Compute position based on wheel encoders
+        self.wheel_diameter = 0.12
+
+        # Assume that the wheels are 0.3 m apart
+        self.wheel_base = 0.21
 
 
     def timer_callback(self):
@@ -95,20 +114,49 @@ class OdometryPublisher(Node):
                 self.tf_broadcaster.sendTransform(transform)
 
 
+    def cmd_vel_callback(self, msg: Twist):
+        # Compute wheel velocities from linear and angular velocities
+
+        # Compute the linear component
+        # wheel_velocity = linear_velocity / wheel_radius
+        linear_component = 2 * msg.linear.x / self.wheel_diameter
+
+        # Compute the angular component
+        # wheel_velocity = angular_velocity * (wheel_base / 2) / wheel_radius
+        angular_component = msg.angular.z * self.wheel_base / self.wheel_diameter
+
+        # Compute the left and right wheel velocities
+        self.left_wheel_velocity_command = linear_component - angular_component
+        self.right_wheel_velocity_command = linear_component + angular_component
+
+
+
+    def send_udp_data(self, ip: str, port: int, message: str, frequency: float):
+        global val
+        # Create a UDP socket
+        sender_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        print(f"Sending UDP data to {ip}:{port}...")
+        try:
+            while True:
+                # Send a struct containing two floats
+                sender_sock.sendto(struct.pack('ff', self.left_wheel_velocity_command, self.right_wheel_velocity_command), (ip, port))
+
+                time.sleep(1 / frequency)
+        finally:
+            sender_sock.close()
 
 
     def compute_odometry(self):
         msg = Odometry()
 
+        # Robot has not initialized, return an empty message
+        if(self.previous_left_wheel_position is None or self.previous_right_wheel_position is None):
+            return msg
+
         msg.header.frame_id = 'odom'
         msg.child_frame_id = 'base_link'
         msg.header.stamp = self.get_clock().now().to_msg()
-
-        # Compute position based on wheel encoders
-        wheel_diameter = 0.12
-
-        # Assume that the wheels are 0.3 m apart
-        wheel_base = 0.21
 
 
         # Compute the change in wheel positions
@@ -118,19 +166,19 @@ class OdometryPublisher(Node):
         # print(f"Left Wheel Delta: {delta_left_wheel_position}\t Right Wheel Delta: {delta_right_wheel_position}")
 
         # Compute the distance traveled by each wheel
-        left_wheel_distance = delta_left_wheel_position * wheel_diameter / 2
-        right_wheel_distance = delta_right_wheel_position * wheel_diameter / 2
+        left_wheel_distance = delta_left_wheel_position * self.wheel_diameter / 2
+        right_wheel_distance = delta_right_wheel_position * self.wheel_diameter / 2
 
         # Compute the average distance traveled by the wheels
         delta_distance = (left_wheel_distance + right_wheel_distance) / 2.0
 
 
         # Compute the change in heading
-        delta_heading = (right_wheel_distance - left_wheel_distance) / wheel_base
+        delta_heading = (right_wheel_distance - left_wheel_distance) / self.wheel_base
 
         # Compute linear and angular velocity
         linear_velocity = (self.left_wheel_velocity + self.right_wheel_velocity) / 2.0
-        angular_velocity = (self.right_wheel_velocity - self.left_wheel_velocity) / wheel_base / 2
+        angular_velocity = (self.right_wheel_velocity - self.left_wheel_velocity) / self.wheel_base / 2
 
 
         # Compute the change in x and y
@@ -196,9 +244,9 @@ class OdometryPublisher(Node):
         recv_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         # Bind the socket to the specified IP and port for receiving
-        recv_sock.bind((self.motorgo_ip, self.motorgo_port))
+        recv_sock.bind((self.recv_ip, self.recv_port))
 
-        print(f"Listening for UDP data on {self.motorgo_ip}:{self.motorgo_port}...")
+        print(f"Listening for UDP data on {self.recv_ip}:{self.recv_port}...")
 
         try:
             while True:
@@ -216,6 +264,7 @@ class OdometryPublisher(Node):
                     self.right_wheel_position, \
                     self.left_wheel_velocity, \
                     self.right_wheel_velocity = struct.unpack('ffff', data)
+
                     # print(f"Received data {addr}: Left Velocity = {self.left_wheel_velocity}, Right Velocity = {self.right_wheel_velocity}, Left Position = {self.left_wheel_position}, Right Position = {self.right_wheel_position}")
                 else:
                     print(f"Received unexpected data size from {addr}: {data}")
@@ -233,7 +282,7 @@ class OdometryPublisher(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    odom_node = OdometryPublisher("192.168.0.15", 8008)
+    odom_node = OdometryPublisher("192.168.0.15", 8008, "192.168.0.242", 8008)
     odom_node.start()
 
 
