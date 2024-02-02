@@ -31,16 +31,16 @@ from nav2_common.launch import RewrittenYaml, ReplaceString
 def generate_launch_description():
     rover_launch_dir = get_package_share_directory('rover_launch')
     # Get the launch directory
-    bringup_dir = get_package_share_directory('nav2_bringup')
-    launch_dir = os.path.join(bringup_dir, 'launch')
+    # bringup_dir = get_package_share_directory('nav2_bringup')
+    launch_dir = os.path.join(rover_launch_dir, 'launch')
 
     # Launch directories for rover_bringup, which is the drive base code
     rover_bringup_dir = get_package_share_directory('rover_bringup')
     rover_bringup_launch_dir = os.path.join(rover_bringup_dir, 'launch')
 
     # Launch directories for sensor_bringup, which is the sensor code
-    sensor_bringup_dir = get_package_share_directory('sensor_bringup')
-    sensor_bringup_launch_dir = os.path.join(sensor_bringup_dir, 'launch')
+    # sensor_bringup_dir = get_package_share_directory('sensor_bringup')
+    # sensor_bringup_launch_dir = os.path.join(sensor_bringup_dir, 'launch')
 
     # Create the launch configuration variables
     namespace = LaunchConfiguration('namespace')
@@ -171,11 +171,6 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(rover_bringup_launch_dir,
                                                        'drive_base_launch.launch.py'))),
-
-        # Launch file for actual rover sensors
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(sensor_bringup_launch_dir,
-                                                       'sensor_launch.launch.py'))),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(launch_dir, 'navigation_launch.py')),
