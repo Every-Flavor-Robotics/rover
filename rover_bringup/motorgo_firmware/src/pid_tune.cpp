@@ -35,7 +35,7 @@ ESPWifiConfig::Configurable<bool> enable_motors(motors_enabled, "/enable",
 long last_time;
 float command = 0.0;
 bool on_or_off = false;
-LowPassFilter command_filter(0.3);
+LowPassFilter command_filter(0.1);
 
 void enable_motors_callback(bool value)
 {
@@ -82,13 +82,6 @@ void loop_motorgo(void* pvParameters)
     motorgo_mini->loop_ch0();
     motorgo_mini->loop_ch1();
 
-    //   Compute loop frequency
-    //   Accumulate loop hz
-    loop_hz = 0.9 * loop_hz + 0.1 * 1000000.0 / (micros() - startTime);
-    startTime = micros();
-
-    //   Print loop frequency
-    freq_println("Loop frequency: " + String(loop_hz), 10);
     esp_task_wdt_reset();
   }
 }
@@ -125,8 +118,8 @@ void setup()
   // Setup Ch0 with FOCStudio enabled
   bool calibrate = false;
   bool enable_foc_studio = false;
-  motorgo_mini->init_ch0(motor_params_ch0, calibrate, enable_foc_studio);
-  motorgo_mini->init_ch1(motor_params_ch0, calibrate, enable_foc_studio);
+  motorgo_mini->init_ch0(motor_params_ch0, calibrate);
+  motorgo_mini->init_ch1(motor_params_ch0, calibrate);
 
   // Instantiate controllers
   motorgo_mini->set_velocity_controller_ch0(velocity_pid_params_ch0);
@@ -184,7 +177,7 @@ void setup()
 
 void loop()
 {
-  if (millis() - last_time > 1000)
+  if (millis() - last_time > 2000)
   {
     last_time = millis();
     command = 10.0 * on_or_off;
@@ -202,4 +195,8 @@ void loop()
   motorgo_mini->set_target_velocity_ch1(output);
 
   vTaskDelay(5 / portTICK_PERIOD_MS);
+
+  //   Print velocities
+  Serial.println("Ch0: " + String(motorgo_mini->get_ch0_velocity()) +
+                 " Ch1: " + String(motorgo_mini->get_ch1_velocity()));
 }

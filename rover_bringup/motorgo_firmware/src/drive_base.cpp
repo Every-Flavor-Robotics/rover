@@ -4,6 +4,8 @@
 #include <WiFiUdp.h>
 #include <esp_task_wdt.h>
 
+// Import lpf
+#include "common/lowpass_filter.h"
 #include "motorgo_mini.h"
 
 // MotorGo Config
@@ -21,6 +23,10 @@ TaskHandle_t loop_foc_task;
 TickType_t xLastWakeTime;
 void loop_foc(void* pvParameters);
 
+// // Add low pass filter for commands
+// LowPassFilter left_command_filter(0.01);
+// LowPassFilter right_command_filter(0.01);
+
 // UDP configuration
 WiFiUDP udp;
 IPAddress agent_ip = IPAddress(192, 168, 0, 15);
@@ -29,6 +35,8 @@ int pub_freq = 80;
 
 float left = 0.0;
 float right = 0.0;
+
+bool enabled = false;
 
 // Make a packed struct for the wheel velocities
 const int ODOMETRY_DATA_SIZE = 4 * sizeof(float);
@@ -111,7 +119,15 @@ void setup()
   motorgo->init_ch1(motor_params_ch1, false);
 
   position_pid_params.lpf_time_constant = 0.01;
+
+  velocity_pid_params_ch0.p = 7;
+  velocity_pid_params_ch0.i = 0.10;
+  velocity_pid_params_ch0.d = 0.0;
   velocity_pid_params_ch0.lpf_time_constant = 0.01;
+
+  velocity_pid_params_ch1.p = 7;
+  velocity_pid_params_ch1.i = 0.10;
+  velocity_pid_params_ch1.d = 0.0;
   velocity_pid_params_ch1.lpf_time_constant = 0.01;
 
   motorgo->set_velocity_controller_ch0(velocity_pid_params_ch0);
@@ -148,6 +164,11 @@ void setup()
 
   // Attach timer for sending wheel velocities
   publish_timer.attach_ms(1000 / pub_freq, send_wheel_velocities);
+
+  // Enable motors
+  motorgo->enable_ch0();
+  motorgo->enable_ch1();
+  enabled = true;
 }
 
 void loop_foc(void* pvParameters)
@@ -165,36 +186,59 @@ void loop_foc(void* pvParameters)
   }
 }
 
+long last_time = millis();
 void loop()
 {
-  //   int packetSize = udp.parsePacket();
-  //   if (packetSize)
-  //   {
-  //     // Buffer to hold incoming data
-  //     char buffer[WHEEL_VELOCITIES_SIZE];
+  // Disable motors if no UDP packets are received for 1 second
+  if (millis() - last_time > 1000 && enabled)
+  {
+    motorgo->disable_ch0();
+    motorgo->disable_ch1();
+    enabled = false;
+  }
+  else if (!enabled && millis() - last_time < 1000)
+  {
+    motorgo->enable_ch0();
+    motorgo->enable_ch1();
 
-  //     // Read the packet into the buffer
-  //     int len = udp.read(buffer, sizeof(buffer));
-  //     if (len > 0)
-  //     {
-  //       // Cast the buffer to the struct
-  //       wheel_velocities_commands_t* wheelCommands =
-  //           reinterpret_cast<wheel_velocities_commands_t*>(buffer);
+    enabled = true;
+  }
 
-  //       float left_velocity = wheelCommands->left;
-  //       float right_velocity = wheelCommands->right;
+  int packetSize = udp.parsePacket();
+  if (packetSize)
+  {
+    // Buffer to hold incoming data
+    char buffer[WHEEL_VELOCITIES_COMMANDS_SIZE];
 
-  //       // Set the wheel velocities
-  //       motorgo.set_target_velocity_ch0(left_velocity);
-  //       motorgo.set_target_velocity_ch1(right_velocity);
+    // Read the packet into the buffer
+    int len = udp.read(buffer, sizeof(buffer));
+    if (len > 0)
+    {
+      last_time = millis();
 
-  //       // Print the received data
-  //       Serial.print("Received - Left: ");
-  //       Serial.print(left_velocity);
-  //       Serial.print(", Right: ");
-  //       Serial.println(right_velocity);
-  //     }
-  //   }
+      // Cast the buffer to the struct
+      wheel_velocities_commands_t* wheelCommands =
+          reinterpret_cast<wheel_velocities_commands_t*>(buffer);
+
+      //   float left_velocity = wheelCommands->left;
+      //   float right_velocity = wheelCommands->right;
+
+      // Set the wheel velocities
+      //   motorgo->set_target_velocity_ch0(
+      //       left_command_filter(wheelCommands->left));
+      //   motorgo->set_target_velocity_ch1(
+      //       right_command_filter(wheelCommands->right));
+
+      motorgo->set_target_velocity_ch0(wheelCommands->left);
+      motorgo->set_target_velocity_ch1(wheelCommands->right);
+
+      //   // Print the received data
+      //   Serial.print("Received - Left: ");
+      //   Serial.print(wheelCommands->left);
+      //   Serial.print(", Right: ");
+      //   Serial.println(wheelCommands->right);
+    }
+  }
 
   vTaskDelay(1);
 }
